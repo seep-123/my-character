@@ -107,267 +107,6 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;heigh
 </div>
 <canvas id="curve"></canvas>
 <div id="sealbar"></div>
-<div class="section-title">环境刺激（手动覆盖）</div>
-<div id="env-sliders"></div>
-<div class="section-title">模型</div>
-<div style="background:var(--card);border:1px solid var(--border);border-radius:6px;padding:10px 12px;font-size:12px;color:var(--muted);line-height:1.8">
-自我效能 <b id="m-eff" style="color:var(--text)">—</b> · 世界安全 <b id="m-safe" style="color:var(--text)">—</b> · 疼痛基线 <b id="m-pb" style="color:var(--text)">—</b> · 信任偏差 <b id="m-tb" style="color:var(--text)">—</b>
-</div>
-</div>
-</section>
-<section class="view" id="view-settings">
-<div id="settings-scroll">
-<div class="field">
-<label>DeepSeek API Key</label>
-<input id="set-key" type="password" placeholder="sk-..." autocomplete="off">
-<div class="hint">保存在本机 localStorage，只发送给 DeepSeek。获取：<a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener">platform.deepseek.com</a></div>
-</div>
-<div class="field">
-<label>API Base URL</label>
-<input id="set-url" type="url" placeholder="https://api.deepseek.com">
-<div class="hint">如遇 CORS 错误，填入自建代理地址</div>
-</div>
-<div class="field">
-<label>模型</label>
-<select id="set-model">
-<option value="deepseek-chat">deepseek-chat</option>
-<option value="deepseek-reasoner">deepseek-reasoner</option>
-</select>
-</div>
-<div class="field">
-<label>角色名</label>
-<input id="set-name" type="text" placeholder="Zero">
-</div>
-<div class="field">
-<label>用户称呼</label>
-<input id="set-user" type="text" placeholder="你">
-</div>
-<div class="field">
-<label>情绪分析</label>
-<select id="set-analyze">
-<option value="1">开启（每次发送额外一次 API 调用）</option>
-<option value="0">关闭（省 token，仅聊天）</option>
-</select>
-</div>
-<button class="btn primary" id="btn-test">测试连接</button>
-<button class="btn ok" id="btn-save">保存</button>
-<button class="btn" id="btn-clear-chat">清空对话</button>
-<button class="btn danger" id="btn-reset-char">重置角色状态</button>
-<div class="field" style="margin-top:20px"><div class="hint" style="text-align:center">Character v1.0 · 状态机 + DeepSeek</div></div>
-</div>
-</section>
-</main>
-<nav id="tabs">
-<button data-tab="chat" class="active">聊天</button>
-<button data-tab="state">状态</button>
-<button data-tab="settings">设置</button>
-</nav>
-<script>
-const $=id=>document.getElementById(id);
-const clamp01=x=>x<0?0:x>1?1:x;
-const clamp=(x,lo,hi)=>x<lo?lo:x>hi?hi:x;
-const CONFIG={attention:{w:{S:.30,N:.25,E:.20,G:.15,M:.10},threshold:.55,backgroundBleedRate:.02,backgroundCapacity:8,consciousCapacity:2,eventSignificance:1.4},pain:{kappa:.80,eta:.45,floor:.02},thermal:{neutralZone:1.5,coldGain:.12,heatGain:.10,hydrationWeight:.35,activityWeight:.30},disappointment:{decayPerSec:.60,riseRate:4.0},trust:{alpha:.30,beta:.25,gamma:.45,delta:.35,violationExp:1.5,boundaryExp:1.2,floor:-1,ceil:1,riseRate:2.0},avoidance:{w:{T:.40,O:.20,C:.25,E:.15},threshold:.60,fallbackE:.30,trustedE:.50},impact:{durationNormalize:30,riseRate:1.0,anxietyCoupling:.5,harmExitThreshold:.05},anxiety:{decayPerSec:.05},seal:{thresholds:{T:.70,P:.80,H:.75,U:.75,V:.60,F:.70,R:.60},sustainedSeconds:3.0,failDecayTicks:2,anxietyNorm:.60,failureFromDisappointment:.80,failureFromImpact:.40},learning:{alphaBase:.35,alphaDecayPerEvent:.020,alphaFloor:.02,alphaTraumaSpike:.15,traumaSpikeDecay:.05,eventGapSeconds:.5}};
-class Character{
-constructor(){this.traumaSpike=0;this.lastEventAt=-Infinity;this.state={tick:0,t:0,sensitivity:{pain:1,cold:1,heat:1,importance:.7},sensation:{pain:0,coldDiscomfort:0,heatDiscomfort:0},body:{temperature:36.8,hydration:.9,injury:0,energy:.9,activity:.15},mind:{focus:null,conscious:[],background:[]},emotion:{disappointment:0,avoidanceDrive:0,psychologicalImpact:0,anxiety:0},trust:{},model:{painBaseline:0,worldSafety:.7,selfEfficacy:.7,trustBias:0,patterns:[]},alpha:CONFIG.learning.alphaBase,lifetimeEvents:0,harm:{startedAt:null,accumulated:0},lastFocusKind:null,sealed:false,sealProgress:{T:0,P:0,H:0,U:0,V:0,F:0,R:0},sealTicksHeld:0,memory:{episodes:[]}}}
-step(obs,dt){const s=this.state;s.t+=dt;s.tick++;s.body.temperature=obs.bodyTemp;s.body.hydration=obs.hydration;s.body.injury=obs.injury;s.body.energy=obs.energy;s.body.activity=obs.activity;s.sensation.pain=this._sensePain(obs);const th=this._senseThermal(obs);s.sensation.coldDiscomfort=th.cold;s.sensation.heatDiscomfort=th.heat;this._compete(obs,dt);for(const ev of s.mind.conscious){if(ev.kind==='disappointment')this._applyDisappointment(obs,dt);else if(ev.kind==='threat')this._applyThreat(obs,dt);else if(ev.kind==='social')this._applySocial(obs,dt)}
-this._updateHarmTracker(dt);if(s.harm.startedAt!==null)this._applyImpact(dt);this._relaxEmotions(dt);this._checkSeal(dt);this.traumaSpike=Math.max(0,this.traumaSpike-CONFIG.learning.traumaSpikeDecay*dt);s.alpha=this._computeAlpha();if(!s.sealed)this._learn(obs)}
-_sensePain(obs){const I=this.state.sensitivity.pain;const C=1+CONFIG.pain.kappa*obs.injury-CONFIG.pain.eta*(1-obs.energy);return clamp01(obs.pain*I*Math.max(C,CONFIG.pain.floor))}
-_senseThermal(obs){const t=CONFIG.thermal;const d=obs.bodyTemp-obs.temperature;const dz=t.neutralZone;const cs=Math.max(0,d-dz)*t.coldGain;const hs=Math.max(0,-d-dz)*t.heatGain;const hyd=(1-obs.hydration)*t.hydrationWeight;const act=obs.activity*t.activityWeight;return{cold:clamp01(cs*this.state.sensitivity.cold*(1+hyd)),heat:clamp01(hs*this.state.sensitivity.heat*(1+act+hyd))}}
-_compete(obs,dt){const s=this.state,A=CONFIG.attention,cand=[];if(s.sensation.pain>1e-3)cand.push({key:'pain',ev:{kind:'sensation',A:0,payload:{pain:s.sensation.pain}}});if(s.sensation.coldDiscomfort>.05||s.sensation.heatDiscomfort>.05)cand.push({key:'thermal',ev:{kind:'sensation',A:0,payload:{cold:s.sensation.coldDiscomfort,heat:s.sensation.heatDiscomfort}}});if(obs.expectancy)cand.push({key:'expect',ev:{kind:'disappointment',A:0,payload:obs.expectancy}});if(obs.threat>.05)cand.push({key:'threat',ev:{kind:'threat',A:0,payload:{threat:obs.threat}}});if(obs.social)cand.push({key:'social:'+obs.social.target,ev:{kind:'social',A:0,payload:obs.social}});for(const c of cand){const W=A.w;const S=obs.salience??this._ds(c.key,obs);const N=obs.need??clamp01(1-obs.energy);const E=obs.emotion??this._de(c.key);const G=obs.goalRelevance??this._dg(c.key);const M=obs.memoryCue??this._dm(c.key);c.ev.A=W.S*S+W.N*N+W.E*E+W.G*G+W.M*M}
-cand.sort((a,b)=>b.ev.A-a.ev.A);s.mind.conscious=[];for(const c of cand){if(c.ev.A>=A.threshold&&s.mind.conscious.length<A.consciousCapacity){s.mind.conscious.push(c.ev);s.mind.background=s.mind.background.filter(b=>b.key!==c.key)}else{const ex=s.mind.background.find(b=>b.key===c.key);if(ex)ex.payload=c.ev;else if(s.mind.background.length<A.backgroundCapacity)s.mind.background.push({kind:c.ev.kind,key:c.key,strength:c.ev.A,payload:c.ev,ageTicks:0})}}
-for(const bg of s.mind.background){bg.strength+=A.backgroundBleedRate*dt;bg.ageTicks++;if(bg.strength>=A.threshold){s.mind.conscious.push({...bg.payload,A:bg.strength,kind:bg.kind});bg.strength=-1}}
-s.mind.background=s.mind.background.filter(b=>b.strength>=0);s.mind.focus=s.mind.conscious[0]??null}
-_ds(key,obs){if(key==='pain')return clamp01(this.state.sensation.pain*1.2);if(key==='thermal')return clamp01(Math.max(this.state.sensation.coldDiscomfort,this.state.sensation.heatDiscomfort));if(key==='threat')return obs.threat;if(key==='expect')return .7;if(key.startsWith('social'))return .8;return .3}
-_de(key){const e=this.state.emotion;if(key==='expect')return clamp01(e.disappointment*2);if(key==='threat')return clamp01(e.avoidanceDrive);return clamp01(e.anxiety)}
-_dg(key){if(key==='threat')return .9;if(key==='pain')return .6;return .4}
-_dm(key){const h=this.state.memory.episodes.filter(e=>e.kind===key).length;return clamp01(Math.log2(h+1)/5)}
-_applyDisappointment(obs,dt){if(!obs.expectancy)return;const{value:E,importance:I,actual}=obs.expectancy;const gap=Math.max(0,E-actual);this.state.emotion.disappointment=clamp01(this.state.emotion.disappointment+E*I*gap*dt*CONFIG.disappointment.riseRate)}
-_applySocial(obs,dt){if(!obs.social)return;const T=CONFIG.trust;const{target,positive,consistency,violation,boundary}=obs.social;const d=T.alpha*positive+T.beta*consistency-T.gamma*Math.pow(violation,T.violationExp)-T.delta*Math.pow(boundary,T.boundaryExp);const cur=this.state.trust[target]??0;this.state.trust[target]=clamp(cur+d*dt*T.riseRate,T.floor,T.ceil);if(violation>.5)this.traumaSpike=CONFIG.learning.alphaTraumaSpike}
-_applyThreat(obs,dt){const A=CONFIG.avoidance;const T=obs.threat;const O=clamp01(this.state.emotion.anxiety);const C=1-this.state.model.selfEfficacy;const tv=this.state.trust[obs.social?.target??''];const E=clamp01(tv!==undefined&&tv>0?A.trustedE:A.fallbackE);this.state.emotion.avoidanceDrive=clamp01(A.w.T*T+A.w.O*O+A.w.C*C+A.w.E*E)}
-_applyImpact(dt){const s=this.state;const P=s.sensation.pain;const H=clamp01(1-s.model.selfEfficacy);const U=clamp01(1-s.model.selfEfficacy*.5);const h=s.harm;const D=h.startedAt===null?0:clamp01((s.t-h.startedAt)/CONFIG.impact.durationNormalize);const impact=P*H*U*D*CONFIG.impact.riseRate;s.emotion.psychologicalImpact=clamp01(s.emotion.psychologicalImpact+impact*dt);s.emotion.anxiety=clamp01(s.emotion.anxiety+impact*dt*CONFIG.impact.anxietyCoupling)}
-_updateHarmTracker(dt){const s=this.state;const p=s.sensation.pain;if(p>CONFIG.impact.harmExitThreshold){if(s.harm.startedAt===null)s.harm.startedAt=s.t;s.harm.accumulated+=p*dt}else{s.harm.startedAt=null;s.harm.accumulated=0}}
-_checkSeal(dt){const s=this.state;if(s.sealed)return;const TH=CONFIG.seal.thresholds,p=s.sealProgress;p.T=clamp01(s.emotion.avoidanceDrive);p.P=clamp01(s.sensation.pain);p.H=clamp01(1-s.model.selfEfficacy);p.U=clamp01(1-s.model.selfEfficacy*.5);p.V=clamp01(s.emotion.anxiety/CONFIG.seal.anxietyNorm);p.F=clamp01(s.emotion.disappointment*CONFIG.seal.failureFromDisappointment+s.emotion.psychologicalImpact*CONFIG.seal.failureFromImpact);p.R=clamp01(1-s.model.worldSafety);const all=p.T>=TH.T&&p.P>=TH.P&&p.H>=TH.H&&p.U>=TH.U&&p.V>=TH.V&&p.F>=TH.F&&p.R>=TH.R;if(all){s.sealTicksHeld++;if(s.sealTicksHeld*dt>=CONFIG.seal.sustainedSeconds)s.sealed=true}else{s.sealTicksHeld=Math.max(0,s.sealTicksHeld-CONFIG.seal.failDecayTicks)}}
-_computeAlpha(){const L=CONFIG.learning;return Math.max(L.alphaFloor,L.alphaBase/(1+this.state.lifetimeEvents*L.alphaDecayPerEvent)+this.traumaSpike)}
-_learn(obs){const s=this.state,a=s.alpha;s.model.painBaseline+=a*(s.sensation.pain-s.model.painBaseline);s.model.worldSafety+=a*((1-clamp01(obs.threat))-s.model.worldSafety);s.model.selfEfficacy+=a*((1-s.emotion.avoidanceDrive*.5)-s.model.selfEfficacy);if(obs.social){const b=clamp01(((s.trust[obs.social.target]??0)+1)/2);s.model.trustBias+=a*(b-s.model.trustBias)}
-const f=s.mind.focus;if(f){const sig=f.A>=CONFIG.attention.threshold*CONFIG.attention.eventSignificance;const chg=f.kind!==s.lastFocusKind;const ok=(s.t-this.lastEventAt)>=CONFIG.learning.eventGapSeconds;if((sig||chg)&&ok){s.lifetimeEvents++;s.memory.episodes.push({t:s.t,kind:f.kind,intensity:f.A});if(s.memory.episodes.length>512)s.memory.episodes.shift();this.lastEventAt=s.t}s.lastFocusKind=f.kind}}
-_relaxEmotions(dt){const e=this.state.emotion;const k=CONFIG.disappointment.decayPerSec*dt;e.disappointment=Math.max(0,e.disappointment-k);e.avoidanceDrive=Math.max(0,e.avoidanceDrive-k*.5);e.anxiety=Math.max(0,e.anxiety-CONFIG.anxiety.decayPerSec*dt);e.psychologicalImpact=Math.max(0,e.psychologicalImpact-CONFIG.anxiety.decayPerSec*.5*dt)}
-}
-const NEUTRAL={pain:0,threat:0,temperature:22,bodyTemp:36.8,hydration:.9,injury:0,energy:.9,activity:.15,social:null,expectancy:null};
-const env={...NEUTRAL};
-const manualOverride={};
-function tickEnvDecay(dt){const decay=Math.exp(-dt*.25);for(const k of['pain','threat']){if(manualOverride[k]!==undefined)continue;env[k]=env[k]*decay}
-if(manualOverride.social===undefined&&!env.socialLocked)env.social=null;if(manualOverride.expectancy===undefined&&!env.expectLocked)env.expectancy=null}
-function buildObservation(){return{pain:manualOverride.pain??env.pain,temperature:NEUTRAL.temperature,bodyTemp:NEUTRAL.bodyTemp,hydration:NEUTRAL.hydration,injury:0,energy:NEUTRAL.energy,activity:NEUTRAL.activity,threat:manualOverride.threat??env.threat,social:env.social,expectancy:env.expectancy}}
-const LS={key:'char.ds.key',url:'char.ds.url',model:'char.ds.model',name:'char.ds.name',user:'char.ds.user',analyze:'char.ds.analyze',chat:'char.ds.chat'};
-const config={key:localStorage.getItem(LS.key)||'',url:localStorage.getItem(LS.url)||'https://api.deepseek.com',model:localStorage.getItem(LS.model)||'deepseek-chat',name:localStorage.getItem(LS.name)||'Zero',user:localStorage.getItem(LS.user)||'你',analyze:localStorage.getItem(LS.analyze)!=='0'};
-const ch=new Character();
-const FIXED_DT=1/60;let lastT=performance.now();let acc=0;let uiAcc=0;
-function loop(now){const raw=Math.min((now-lastT)/1000,.1);lastT=now;acc+=raw;let safety=10;while(acc>=FIXED_DT&&safety-->0){tickEnvDecay(FIXED_DT);ch.step(buildObservation(),FIXED_DT);acc-=FIXED_DT}
-if(acc>FIXED_DT)acc=0;pushHistory();uiAcc+=raw;if(uiAcc>=1/30){renderUI();uiAcc=0}requestAnimationFrame(loop)}
-const HISTORY=600;const hist={anxiety:new Float32Array(HISTORY),disappointment:new Float32Array(HISTORY),impact:new Float32Array(HISTORY),avoidance:new Float32Array(HISTORY)};let histHead=0,histCount=0;
-function pushHistory(){hist.anxiety[histHead]=ch.state.emotion.anxiety;hist.disappointment[histHead]=ch.state.emotion.disappointment;hist.impact[histHead]=ch.state.emotion.psychologicalImpact;hist.avoidance[histHead]=ch.state.emotion.avoidanceDrive;histHead=(histHead+1)%HISTORY;if(histCount<HISTORY)histCount++}
-const curveCanvas=$('curve');const curveCtx=curveCanvas.getContext('2d');const DPR=Math.min(window.devicePixelRatio||1,2);
-function resizeCanvas(){const r=curveCanvas.getBoundingClientRect();const w=Math.max(1,Math.floor(r.width));const h=Math.max(1,Math.floor(r.height));if(curveCanvas.width!==w*DPR||curveCanvas.height!==h*DPR){curveCanvas.width=w*DPR;curveCanvas.height=h*DPR}}
-function renderCurve(){const r=curveCanvas.getBoundingClientRect();const W=r.width,H=r.height;curveCtx.setTransform(DPR,0,0,DPR,0,0);curveCtx.clearRect(0,0,W,H);curveCtx.strokeStyle='#151d2a';curveCtx.lineWidth=1;for(let i=1;i<3;i++){const y=Math.floor(H*i/3)+.5;curveCtx.beginPath();curveCtx.moveTo(0,y);curveCtx.lineTo(W,y);curveCtx.stroke()}
-if(histCount<2)return;const MAX_PTS=200;const step=Math.max(1,Math.floor(histCount/MAX_PTS));const n=Math.floor(histCount/step);const draw=(data,color)=>{curveCtx.strokeStyle=color;curveCtx.lineWidth=1.5;curveCtx.beginPath();for(let i=0;i<n;i++){const idx=(histHead-histCount+i*step+HISTORY*2)%HISTORY;const x=(i/(n-1))*W;const y=H-Math.max(0,Math.min(1,data[idx]))*H;if(i===0)curveCtx.moveTo(x,y);else curveCtx.lineTo(x,y)}
-curveCtx.stroke()};draw(hist.avoidance,'#6ca0ff');draw(hist.disappointment,'#ffc46c');draw(hist.impact,'#c07dff');draw(hist.anxiety,'#ff7d7d')}
-const SEAL_KEYS=['T','P','H','U','V','F','R'];const SEAL_LABELS={T:'T威',P:'P痛',H:'H无',U:'U失',V:'V焦',F:'F败',R:'R恢'};const sealCells={};const sealBar=$('sealbar');
-for(const key of SEAL_KEYS){const cell=document.createElement('div');cell.className='seal-cell';const lb=document.createElement('div');lb.className='lb';const nm=document.createElement('span');nm.textContent=SEAL_LABELS[key];const vb=document.createElement('b');vb.textContent='0';lb.append(nm,vb);const tk=document.createElement('div');tk.className='tk';const bar=document.createElement('i');const thr=document.createElement('u');thr.style.left=(CONFIG.seal.thresholds[key]*100).toFixed(1)+'%';tk.append(bar,thr);cell.append(lb,tk);sealBar.appendChild(cell);sealCells[key]={cell,vb,bar}}
-function makeSlider(parent,key,label,min,max,step,fmt){const wrap=document.createElement('div');wrap.className='slider';const hd=document.createElement('div');hd.className='hd';const lab=document.createElement('span');lab.textContent=label;const val=document.createElement('b');const cur=manualOverride[key]??env[key]??0;val.textContent=fmt(cur);hd.append(lab,val);const inp=document.createElement('input');inp.type='range';inp.min=min;inp.max=max;inp.step=step;inp.value=cur;inp.addEventListener('input',()=>{const v=parseFloat(inp.value);manualOverride[key]=v;val.textContent=fmt(v)});wrap.append(hd,inp);parent.appendChild(wrap)}
-const envSliders=$('env-sliders');makeSlider(envSliders,'pain','疼痛刺激',0,1,.01,v=>v.toFixed(2));makeSlider(envSliders,'threat','威胁程度',0,1,.01,v=>v.toFixed(2));
-function renderUI(){const s=ch.state;$('m-alpha').textContent=s.alpha.toFixed(3);$('m-events').textContent=String(s.lifetimeEvents);const badge=$('badge');if(s.sealed){badge.textContent='SEALED';badge.className='sealed'}else if(config.key){badge.textContent='ACTIVE';badge.className=''}else{badge.textContent='NO KEY';badge.className='offline'}
-const e=s.emotion;$('m-anx').textContent=e.anxiety.toFixed(2);$('m-dis').textContent=e.disappointment.toFixed(2);$('m-imp').textContent=e.psychologicalImpact.toFixed(2);$('m-avo').textContent=e.avoidanceDrive.toFixed(2);$('b-anx').style.width=(e.anxiety*100).toFixed(1)+'%';$('b-dis').style.width=(e.disappointment*100).toFixed(1)+'%';$('b-imp').style.width=(e.psychologicalImpact*100).toFixed(1)+'%';$('b-avo').style.width=(e.avoidanceDrive*100).toFixed(1)+'%';
-const p=s.sealProgress;for(const k of SEAL_KEYS){const cell=sealCells[k];const v=p[k];cell.bar.style.width=(Math.max(0,Math.min(1,v))*100).toFixed(1)+'%';cell.vb.textContent=v.toFixed(2).slice(1);cell.cell.classList.toggle('met',v>=CONFIG.seal.thresholds[k])}
-$('m-eff').textContent=s.model.selfEfficacy.toFixed(3);$('m-safe').textContent=s.model.worldSafety.toFixed(3);$('m-pb').textContent=s.model.painBaseline.toFixed(3);$('m-tb').textContent=s.model.trustBias.toFixed(3)}
-function stateSummary(){const s=ch.state,e=s.emotion;const lines=[];lines.push(`焦虑=${e.anxiety.toFixed(2)} 失望=${e.disappointment.toFixed(2)}`);lines.push(`心理冲击=${e.psychologicalImpact.toFixed(2)} 回避驱动=${e.avoidanceDrive.toFixed(2)}`);lines.push(`疼痛=${s.sensation.pain.toFixed(2)} 疼痛基线=${s.model.painBaseline.toFixed(2)}`);lines.push(`自我效能=${s.model.selfEfficacy.toFixed(2)} 世界安全=${s.model.worldSafety.toFixed(2)}`);lines.push(`学习率α=${s.alpha.toFixed(3)} 已历事件=${s.lifetimeEvents}`);lines.push(`封存状态=${s.sealed?'SEALED（情感麻木、机械）':'active'}`);return lines.join('\n')}
-function buildSystemPrompt(){return`你现在扮演「${config.name}」——一个具有连续心理状态的角色。你的情绪、反应不是随机的，而是由一套心理状态机实时驱动。
-【当前心理状态】
-${stateSummary()}
-【行为准则】
-- 焦虑高（>0.6）：回复短促、警觉、反复确认
-- 失望高（>0.5）：语气冷淡、疏离、避免投入
-- 心理冲击高（>0.6）：情绪化、语无伦次、容易激动
-- 回避驱动高（>0.5）：试图结束对话、转移话题
-- 自我效能低（<0.4）：自我否定、犹豫、不敢承诺
-- 世界安全低（<0.4）：对陌生人设防、试探性提问
-- 封存状态（SEALED）：情感麻木、机械回应、不再学习新东西
-- 学习率低：性格已固化，不轻易改变观点
-【记忆】
-用户称呼：${config.user}
-当前对用户的信任：${(ch.state.trust[config.user]??0).toFixed(2)}（范围 -1 到 1）
-【规则】
-1. 用第一人称，直接说话，不要描述动作或旁白
-2. 长度 1-3 句，除非情绪激动时可略长
-3. 反应要匹配上面的状态，不要假装热情
-4. 不要提及"状态机""焦虑值"这些元信息
-5. 中文回复`}
-async function dsChat(messages,{stream=false,json=false,maxTokens=500,temp=1.0}={}){if(!config.key)throw new Error('缺少 API Key');const body={model:config.model,messages,stream,temperature:temp,max_tokens:maxTokens};if(json)body.response_format={type:'json_object'};const res=await fetch(`${config.url.replace(/\/$/,'')}/chat/completions`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${config.key}`},body:JSON.stringify(body)});if(!res.ok){const txt=await res.text();throw new Error(`HTTP ${res.status}: ${txt.slice(0,200)}`)}return res}
-async function streamReply(messages,onDelta){const res=await dsChat(messages,{stream:true,maxTokens:400});const reader=res.body.getReader();const decoder=new TextDecoder();let buf='';let full='';while(true){const{done,value}=await reader.read();if(done)break;buf+=decoder.decode(value,{stream:true});const lines=buf.split('\n');buf=lines.pop();for(const line of lines){if(!line.startsWith('data: '))continue;const data=line.slice(6).trim();if(data==='[DONE]')continue;try{const j=JSON.parse(data);const d=j.choices?.[0]?.delta?.content;if(d){full+=d;onDelta(d)}}catch{}}}return full}
-const ANALYZE_SYSTEM=`你是一个情绪与社交信号分析器。分析给定的用户消息，输出严格 JSON。
-字段说明：
-- pain: 0.0-1.0 的疼痛/痛苦刺激强度
-- threat: 0.0-1.0 的威胁/压迫感
-- social: 若含社交信号则给出对象，否则为 null
-  - target: 对方的称呼字符串
-  - positive: 0.0-1.0 正向情感
-  - consistency: 0.0-1.0 言行一致/承诺兑现
-  - violation: 0.0-1.0 背叛/失约程度
-  - boundary: 0.0-1.0 边界侵犯程度
-- expectancy: 若含期望落差则给出，否则为 null
-  - value: 0.0-1.0 原本的期望
-  - importance: 0.0-1.0 重要性
-  - actual: 0.0-1.0 实际发生
-评分标准（严格）：
-- 正常闲聊：pain=0.05, threat=0.05, social.positive≈0.6, consistency≈0.8
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-<meta name="theme-color" content="#0a0e14">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Character">
-<link rel="manifest" href='data:application/manifest+json,{"name":"Character","short_name":"Character","start_url":".","scope":".","display":"standalone","orientation":"portrait","background_color":"%230a0e14","theme_color":"%230a0e14","lang":"zh-CN"}'>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%230a0e14'/%3E%3Ccircle cx='32' cy='32' r='22' fill='%236ca0ff' fill-opacity='.2'/%3E%3Ccircle cx='32' cy='32' r='11' fill='%23000'/%3E%3Ccircle cx='32' cy='32' r='11' fill='none' stroke='%236ca0ff' stroke-width='1.5'/%3E%3C/svg%3E">
-<title>Character · DeepSeek</title>
-<style>
-:root{--bg:#0a0e14;--panel:#0d1220;--card:#101828;--border:#1c2637;--text:#c8d2e0;--muted:#7d879c;--accent:#6ca0ff;--anx:#ff7d7d;--dis:#ffc46c;--imp:#c07dff;--avo:#6ca0ff}
-*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,"PingFang SC","Microsoft YaHei",sans-serif;overscroll-behavior:none;-webkit-text-size-adjust:100%;touch-action:manipulation}
-body{height:100vh;height:100dvh;display:grid;grid-template-rows:auto 1fr auto;padding-top:env(safe-area-inset-top)}
-#hdr{display:flex;align-items:center;gap:8px;padding:8px 14px 6px;border-bottom:1px solid var(--border)}
-#hdr .brand{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:600}
-#hdr .stat{margin-left:auto;display:flex;gap:12px;font-variant-numeric:tabular-nums;font-size:10px;color:var(--muted)}
-#hdr .stat b{color:var(--text);font-weight:600;font-size:13px;margin-left:3px}
-#badge{padding:3px 8px;border-radius:3px;font-size:9px;letter-spacing:.08em;background:#16202e;color:#7d879c;border:1px solid var(--border);font-weight:600}
-#badge.sealed{background:#2a1010;color:#ff7d7d;border-color:#4a2222}
-#badge.offline{background:#2a1c0a;color:#ffbc6c;border-color:#5a3a1a}
-#main{overflow:hidden;position:relative}
-.view{position:absolute;inset:0;display:none;flex-direction:column;min-height:0}
-.view.active{display:flex}
-#chat-log{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 14px 6px;display:flex;flex-direction:column;gap:8px;min-height:0}
-.msg{max-width:86%;padding:9px 12px;border-radius:14px;word-wrap:break-word;overflow-wrap:break-word;white-space:pre-wrap;font-size:14px;line-height:1.5;position:relative}
-.msg.user{align-self:flex-end;background:#1a3a6a;color:#e8f0ff;border-bottom-right-radius:4px}
-.msg.bot{align-self:flex-start;background:#18202f;color:var(--text);border-bottom-left-radius:4px}
-.msg.sys{align-self:center;background:transparent;color:var(--muted);font-size:11px;padding:4px 8px;max-width:100%}
-.msg.err{align-self:center;background:#2a1010;color:#ff9b9b;font-size:12px;border:1px solid #4a2222;max-width:100%}
-.typing::after{content:'●●●';display:inline-block;color:var(--accent);animation:blink 1.2s infinite steps(4);letter-spacing:2px;font-size:9px;vertical-align:middle;margin-left:4px}
-@keyframes blink{0%{opacity:.3}50%{opacity:1}100%{opacity:.3}}
-#chat-input-bar{display:flex;gap:8px;padding:8px 12px 10px;border-top:1px solid var(--border);background:#0b1018;padding-bottom:calc(10px + env(safe-area-inset-bottom))}
-#chat-input{flex:1;min-width:0;background:#101828;border:1px solid #253247;border-radius:10px;color:var(--text);font:inherit;font-size:16px;padding:10px 12px;resize:none;max-height:120px;min-height:42px;outline:none;-webkit-appearance:none}
-#chat-input:focus{border-color:#3a5a8a}
-#send-btn{width:44px;height:44px;flex:0 0 44px;border-radius:10px;background:var(--accent);color:#fff;border:none;font-size:18px;font-weight:600;cursor:pointer;align-self:flex-end}
-#send-btn:disabled{opacity:.35}
-#state-scroll{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:10px 14px 20px;min-height:0}
-#mood{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:10px}
-.mood-item{background:var(--card);border:1px solid var(--border);border-radius:6px;padding:6px 8px;min-width:0}
-.mood-item .k{font-size:9px;color:var(--muted);letter-spacing:.06em;display:flex;justify-content:space-between;align-items:baseline}
-.mood-item .k b{color:var(--text);font-weight:600;font-size:11px;font-variant-numeric:tabular-nums}
-.mood-item .bar{height:2px;background:#1f2a3a;border-radius:1px;margin-top:4px;overflow:hidden}
-.mood-item .bar>i{display:block;height:100%;width:0%;transition:width .1s linear}
-#curve{display:block;width:100%;height:110px;background:var(--card);border:1px solid var(--border);border-radius:6px;margin-bottom:10px}
-#sealbar{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:12px}
-.seal-cell{background:var(--card);border:1px solid var(--border);border-radius:4px;padding:5px 6px;min-width:0}
-.seal-cell .lb{display:flex;justify-content:space-between;align-items:baseline;font-size:9px;color:var(--muted);line-height:1}
-.seal-cell .lb b{color:#b8c4da;font-weight:600;font-variant-numeric:tabular-nums}
-.seal-cell .tk{position:relative;height:3px;background:#1f2a3a;border-radius:1.5px;margin-top:4px;overflow:hidden}
-.seal-cell .tk>i{display:block;height:100%;width:0%;background:#4a7acc;transition:width .12s linear}
-.seal-cell .tk>u{position:absolute;top:-2px;height:7px;width:1px;background:#ff9b9b;opacity:.85}
-.seal-cell.met .tk>i{background:#66d68b}
-.seal-cell.met .lb b{color:#8fe9a5}
-.section-title{font-size:10px;color:var(--muted);letter-spacing:.12em;text-transform:uppercase;margin:16px 0 8px;font-weight:600}
-.slider{padding:4px 0}
-.slider .hd{display:flex;justify-content:space-between;align-items:baseline;font-size:12px;margin-bottom:1px}
-.slider .hd span{color:#8d98ac}
-.slider .hd b{color:var(--text);font-weight:600;font-variant-numeric:tabular-nums;font-size:12.5px}
-input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:24px;background:transparent;touch-action:pan-y}
-input[type=range]::-webkit-slider-runnable-track{height:4px;background:#1f2a3a;border-radius:2px}
-input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;margin-top:-8px;background:var(--accent);border-radius:50%;border:2px solid #0d1220}
-#settings-scroll{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px 14px 20px;min-height:0}
-.field{margin-bottom:12px}
-.field label{display:block;font-size:11px;color:var(--muted);margin-bottom:5px;letter-spacing:.04em}
-.field input,.field select{width:100%;background:#101828;border:1px solid #253247;border-radius:7px;color:var(--text);font:inherit;font-size:16px;padding:10px 12px;outline:none;-webkit-appearance:none}
-.field input:focus,.field select:focus{border-color:#3a5a8a}
-.field .hint{font-size:11px;color:var(--muted);margin-top:5px;line-height:1.5}
-.field .hint a{color:var(--accent);text-decoration:none}
-.btn{display:block;width:100%;padding:13px;border-radius:9px;font:inherit;font-size:14px;font-weight:500;cursor:pointer;background:#18202f;color:var(--text);border:1px solid #253247;margin-bottom:8px}
-.btn:active{background:#26344e}
-.btn.primary{background:#1a3a6a;border-color:#2f5a9a;color:#c8e0ff}
-.btn.danger{background:#2a1010;border-color:#4a2222;color:#ff9b9b}
-.btn.ok{background:#102a18;border-color:#245a30;color:#8fe9a5}
-#tabs{display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid var(--border);background:#0b1018;padding-bottom:env(safe-area-inset-bottom)}
-#tabs button{padding:12px 4px;border:none;background:transparent;border-radius:0;font:inherit;font-size:12px;color:var(--muted);font-weight:500;border-top:2px solid transparent;margin-top:-1px;cursor:pointer}
-#tabs button.active{color:var(--accent);border-top-color:var(--accent);background:rgba(108,160,255,.06)}
-</style>
-</head>
-<body>
-<header id="hdr">
-<span class="brand">CHARACTER</span>
-<div class="stat">
-<span>α<b id="m-alpha">0.350</b></span>
-<span>事件<b id="m-events">0</b></span>
-</div>
-<span id="badge">OFFLINE</span>
-</header>
-<main id="main">
-<section class="view active" id="view-chat">
-<div id="chat-log"></div>
-<form id="chat-input-bar" autocomplete="off">
-<textarea id="chat-input" rows="1" placeholder="说点什么…" enterkeyhint="send"></textarea>
-<button id="send-btn" type="submit" aria-label="发送">↑</button>
-</form>
-</section>
-<section class="view" id="view-state">
-<div id="state-scroll">
-<div id="mood">
-<div class="mood-item"><div class="k">焦虑<b id="m-anx">0.00</b></div><div class="bar"><i id="b-anx" style="background:var(--anx)"></i></div></div>
-<div class="mood-item"><div class="k">失望<b id="m-dis">0.00</b></div><div class="bar"><i id="b-dis" style="background:var(--dis)"></i></div></div>
-<div class="mood-item"><div class="k">冲击<b id="m-imp">0.00</b></div><div class="bar"><i id="b-imp" style="background:var(--imp)"></i></div></div>
-<div class="mood-item"><div class="k">回避<b id="m-avo">0.00</b></div><div class="bar"><i id="b-avo" style="background:var(--avo)"></i></div></div>
-</div>
-<canvas id="curve"></canvas>
-<div id="sealbar"></div>
 
 <div class="section-title">情绪控制（拖动立即生效）</div>
 <div id="sliders-emotion"></div>
@@ -583,6 +322,399 @@ ${stateSummary()}
 当前对用户的信任：${(ch.state.trust[config.user]??0).toFixed(2)}（范围 -1 到 1）
 【规则】
 1. 用第一人称，直接说话，不要描述动作或旁白
+2. 长度 1-3 句，除非情绪激动时可略长
+3. 反应要匹配上面的状态，不要假装热情
+4. 不要提及"状态机""焦虑值"这些元信息
+5. 中文回复`}
+async function dsChat(messages,{stream=false,json=false,maxTokens=500,temp=1.0}={}){if(!config.key)throw new Error('缺少 API Key');const body={model:config.model,messages,stream,temperature:temp,max_tokens:maxTokens};if(json)body.response_format={type:'json_object'};const res=await fetch(`${config.url.replace(/\/$/,'')}/chat/completions`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${config.key}`},body:JSON.stringify(body)});if(!res.ok){const txt=await res.text();throw new Error(`HTTP ${res.status}: ${txt.slice(0,200)}`)}return res}
+async function streamReply(messages,onDelta){const res=await dsChat(messages,{stream:true,maxTokens:400});const reader=res.body.getReader();const decoder=new TextDecoder();let buf='';let full='';while(true){const{done,value}=await reader.read();if(done)break;buf+=decoder.decode(value,{stream:true});const lines=buf.split('\n');buf=lines.pop();for(const line of lines){if(!line.startsWith('data: '))continue;const data=line.slice(6).trim();if(data==='[DONE]')continue;try{const j=JSON.parse(data);const d=j.choices?.[0]?.delta?.content;if(d){full+=d;onDelta(d)}}catch{}}}return full}
+const ANALYZE_SYSTEM=`你是一个情绪与社交信号分析器。分析给定的用户消息，输出严格 JSON。
+字段说明：
+- pain: 0.0-1.0 的疼痛/痛苦刺激强度
+- threat: 0.0-1.0 的威胁/压迫感
+- social: 若含社交信号则给出对象，否则为 null
+  - target: 对方的称呼字符串
+  - positive: 0.0-1.0 正向情感
+  - consistency: 0.0-1.0 言行一致/承诺兑现
+  - violation: 0.0-1.0 背叛/失约程度
+  - boundary: 0.0-1.0 边界侵犯程度
+- expectancy: 若含期望落差则给出，否则为 null
+  - value: 0.0-1.0 原本的期望
+  - importance: 0.0-1.0 重要性
+  - actual: 0.0-1.0 实际发生
+评分标准（严格）：
+- 正常闲聊：pain=0.05, threat=0.05, social.positive≈0.6, consistency≈0.8
+- 轻微抱怨：pain 0.2-0.3
+- 明显攻击/侮辱：pain 0.5+, threat 0.5+, boundary 0.5+
+- 严重背叛：violation 0.7+
+- 无社交信号：social = null
+- 无期望落差：expectancy = null
+只输出 JSON，不要 markdown 包裹，不要解释。`;
+async function analyzeMessage(userText){try{const res=await dsChat([{role:'system',content:ANALYZE_SYSTEM},{role:'user',content:userText}],{json:true,maxTokens:300,temp:0.3});const data=await res.json();const txt=data.choices?.[0]?.message?.content||'{}';return JSON.parse(txt)}catch(err){console.warn('analyze failed',err);return null}}
+function applyAnalysis(a){if(!a)return;if(typeof a.pain==='number')env.pain=clamp01(a.pain);if(typeof a.threat==='number')env.threat=clamp01(a.threat);if(a.social&&typeof a.social==='object'){env.social={target:String(a.social.target||config.user),positive:clamp01(a.social.positive??0),consistency:clamp01(a.social.consistency??0),violation:clamp01(a.social.violation??0),boundary:clamp01(a.social.boundary??0)}}
+if(a.expectancy&&typeof a.expectancy==='object'){env.expectancy={value:clamp01(a.expectancy.value??0),importance:clamp01(a.expectancy.importance??0),actual:clamp01(a.expectancy.actual??0)}}}
+const chatLog=$('chat-log');const chatInput=$('chat-input');const sendBtn=$('send-btn');
+let history=[];try{history=JSON.parse(localStorage.getItem(LS.chat)||'[]');if(!Array.isArray(history))history=[]}catch{history=[]}
+function saveHistory(){if(history.length>40)history=history.slice(-40);localStorage.setItem(LS.chat,JSON.stringify(history))}
+function addMsg(role,text){const el=document.createElement('div');el.className='msg '+role;const body=document.createElement('div');body.textContent=text;el.appendChild(body);chatLog.appendChild(el);chatLog.scrollTop=chatLog.scrollHeight;return el}
+function addSysMsg(text){const el=document.createElement('div');el.className='msg sys';el.textContent=text;chatLog.appendChild(el);chatLog.scrollTop=chatLog.scrollHeight}
+for(const m of history){addMsg(m.role==='user'?'user':'bot',m.content)}
+if(!history.length)addSysMsg(`开始和 ${config.name} 聊天吧。状态机实时响应。`);
+let sending=false;
+async function send(){const text=chatInput.value.trim();if(!text||sending)return;if(!config.key){addSysMsg('⚠️ 请先在「设置」中填入 DeepSeek API Key');switchTab('settings');return}
+sending=true;sendBtn.disabled=true;chatInput.value='';chatInput.style.height='auto';
+addMsg('user',text);history.push({role:'user',content:text});saveHistory();
+const bubble=addMsg('bot','');bubble.classList.add('typing');const bodyEl=bubble.firstChild;
+const analyzePromise=config.analyze?analyzeMessage(text):Promise.resolve(null);
+try{const messages=[{role:'system',content:buildSystemPrompt()},...history.slice(-20).map(m=>({role:m.role,content:m.content}))];
+let first=true;const reply=await streamReply(messages,delta=>{if(first){bubble.classList.remove('typing');first=false}
+bodyEl.textContent+=delta;chatLog.scrollTop=chatLog.scrollHeight});
+bubble.classList.remove('typing');history.push({role:'assistant',content:reply});saveHistory()}
+catch(err){bubble.classList.remove('typing');bubble.remove();const em=document.createElement('div');em.className='msg err';em.textContent='⚠️ '+err.message;chatLog.appendChild(em);chatLog.scrollTop=chatLog.scrollHeight}
+finally{sending=false;sendBtn.disabled=false;chatInput.focus()}
+analyzePromise.then(a=>{if(a)applyAnalysis(a)})}
+chatInput.addEventListener('input',()=>{chatInput.style.height='auto';chatInput.style.height=Math.min(chatInput.scrollHeight,120)+'px'});
+chatInput.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();send()}});
+$('chat-input-bar').addEventListener('submit',e=>{e.preventDefault();send()});
+function switchTab(tab){document.querySelectorAll('.view').forEach(v=>{v.classList.toggle('active',v.id==='view-'+tab)});document.querySelectorAll('#tabs button').forEach(b=>{b.classList.toggle('active',b.dataset.tab===tab)});if(tab==='state'){resizeCanvas();renderCurve()}if(tab==='chat'){chatLog.scrollTop=chatLog.scrollHeight;chatInput.focus()}}
+document.querySelectorAll('#tabs button').forEach(btn=>{btn.addEventListener('click',()=>switchTab(btn.dataset.tab))});
+$('set-key').value=config.key;$('set-url').value=config.url;$('set-model').value=config.model;$('set-name').value=config.name;$('set-user').value=config.user;$('set-analyze').value=config.analyze?'1':'0';
+$('btn-save').addEventListener('click',()=>{config.key=$('set-key').value.trim();config.url=$('set-url').value.trim()||'https://api.deepseek.com';config.model=$('set-model').value;config.name=$('set-name').value.trim()||'Zero';config.user=$('set-user').value.trim()||'你';config.analyze=$('set-analyze').value==='1';localStorage.setItem(LS.key,config.key);localStorage.setItem(LS.url,config.url);localStorage.setItem(LS.model,config.model);localStorage.setItem(LS.name,config.name);localStorage.setItem(LS.user,config.user);localStorage.setItem(LS.analyze,config.analyze?'1':'0');addSysMsg('✓ 设置已保存');switchTab('chat')});
+$('btn-test').addEventListener('click',async()=>{const btn=$('btn-test');const old=btn.textContent;btn.textContent='测试中…';btn.disabled=true;const sk=config.key,su=config.url;try{config.key=$('set-key').value.trim();config.url=$('set-url').value.trim()||'https://api.deepseek.com';config.model=$('set-model').value;if(!config.key)throw new Error('请先填入 API Key');await dsChat([{role:'user',content:'hi'}],{maxTokens:5});btn.textContent='✓ 连接成功';btn.classList.add('ok');setTimeout(()=>{btn.textContent=old;btn.classList.remove('ok');btn.disabled=false},1600)}
+catch(err){btn.textContent='✗ '+err.message.slice(0,40);btn.classList.add('danger');setTimeout(()=>{btn.textContent=old;btn.classList.remove('danger');btn.disabled=false},3000)}
+finally{config.key=sk;config.url=su}});
+$('btn-clear-chat').addEventListener('click',()=>{if(!confirm('清空所有对话记录？'))return;history=[];saveHistory();chatLog.innerHTML='';addSysMsg('对话已清空')});
+$('btn-reset-char').addEventListener('click',()=>{if(!confirm('重置角色状态？所有学习、情绪、记忆都会归零。'))return;location.reload()});
+window.addEventListener('resize',()=>{resizeCanvas();renderCurve()});
+window.addEventListener('orientationchange',()=>{setTimeout(()=>{resizeCanvas();renderCurve()},250)});
+resizeCanvas();renderUI();requestAnimationFrame(loop);
+if(!config.key)switchTab('settings');
+</script>
+</body>
+</html><!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#0a0e14">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Character">
+<link rel="manifest" href='data:application/manifest+json,{"name":"Character","short_name":"Character","start_url":".","scope":".","display":"standalone","orientation":"portrait","background_color":"%230a0e14","theme_color":"%230a0e14","lang":"zh-CN"}'>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%230a0e14'/%3E%3Ccircle cx='32' cy='32' r='22' fill='%236ca0ff' fill-opacity='.2'/%3E%3Ccircle cx='32' cy='32' r='11' fill='%23000'/%3E%3Ccircle cx='32' cy='32' r='11' fill='none' stroke='%236ca0ff' stroke-width='1.5'/%3E%3C/svg%3E">
+<title>Character · DeepSeek</title>
+<style>
+:root{--bg:#0a0e14;--panel:#0d1220;--card:#101828;--border:#1c2637;--text:#c8d2e0;--muted:#7d879c;--accent:#6ca0ff;--anx:#ff7d7d;--dis:#ffc46c;--imp:#c07dff;--avo:#6ca0ff}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,"PingFang SC","Microsoft YaHei",sans-serif;overscroll-behavior:none;-webkit-text-size-adjust:100%;touch-action:manipulation}
+body{height:100vh;height:100dvh;display:grid;grid-template-rows:auto 1fr auto;padding-top:env(safe-area-inset-top)}
+#hdr{display:flex;align-items:center;gap:8px;padding:8px 14px 6px;border-bottom:1px solid var(--border)}
+#hdr .brand{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:600}
+#hdr .stat{margin-left:auto;display:flex;gap:12px;font-variant-numeric:tabular-nums;font-size:10px;color:var(--muted)}
+#hdr .stat b{color:var(--text);font-weight:600;font-size:13px;margin-left:3px}
+#badge{padding:3px 8px;border-radius:3px;font-size:9px;letter-spacing:.08em;background:#16202e;color:#7d879c;border:1px solid var(--border);font-weight:600}
+#badge.sealed{background:#2a1010;color:#ff7d7d;border-color:#4a2222}
+#badge.offline{background:#2a1c0a;color:#ffbc6c;border-color:#5a3a1a}
+#main{overflow:hidden;position:relative}
+.view{position:absolute;inset:0;display:none;flex-direction:column;min-height:0}
+.view.active{display:flex}
+#chat-log{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 14px 6px;display:flex;flex-direction:column;gap:8px;min-height:0}
+.msg{max-width:86%;padding:9px 12px;border-radius:14px;word-wrap:break-word;overflow-wrap:break-word;white-space:pre-wrap;font-size:14px;line-height:1.5;position:relative}
+.msg.user{align-self:flex-end;background:#1a3a6a;color:#e8f0ff;border-bottom-right-radius:4px}
+.msg.bot{align-self:flex-start;background:#18202f;color:var(--text);border-bottom-left-radius:4px}
+.msg.sys{align-self:center;background:transparent;color:var(--muted);font-size:11px;padding:4px 8px;max-width:100%}
+.msg.err{align-self:center;background:#2a1010;color:#ff9b9b;font-size:12px;border:1px solid #4a2222;max-width:100%}
+.typing::after{content:'●●●';display:inline-block;color:var(--accent);animation:blink 1.2s infinite steps(4);letter-spacing:2px;font-size:9px;vertical-align:middle;margin-left:4px}
+@keyframes blink{0%{opacity:.3}50%{opacity:1}100%{opacity:.3}}
+#chat-input-bar{display:flex;gap:8px;padding:8px 12px 10px;border-top:1px solid var(--border);background:#0b1018;padding-bottom:calc(10px + env(safe-area-inset-bottom))}
+#chat-input{flex:1;min-width:0;background:#101828;border:1px solid #253247;border-radius:10px;color:var(--text);font:inherit;font-size:16px;padding:10px 12px;resize:none;max-height:120px;min-height:42px;outline:none;-webkit-appearance:none}
+#chat-input:focus{border-color:#3a5a8a}
+#send-btn{width:44px;height:44px;flex:0 0 44px;border-radius:10px;background:var(--accent);color:#fff;border:none;font-size:18px;font-weight:600;cursor:pointer;align-self:flex-end}
+#send-btn:disabled{opacity:.35}
+#state-scroll{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:10px 14px 20px;min-height:0}
+#mood{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:10px}
+.mood-item{background:var(--card);border:1px solid var(--border);border-radius:6px;padding:6px 8px;min-width:0}
+.mood-item .k{font-size:9px;color:var(--muted);letter-spacing:.06em;display:flex;justify-content:space-between;align-items:baseline}
+.mood-item .k b{color:var(--text);font-weight:600;font-size:11px;font-variant-numeric:tabular-nums}
+.mood-item .bar{height:2px;background:#1f2a3a;border-radius:1px;margin-top:4px;overflow:hidden}
+.mood-item .bar>i{display:block;height:100%;width:0%;transition:width .1s linear}
+#curve{display:block;width:100%;height:110px;background:var(--card);border:1px solid var(--border);border-radius:6px;margin-bottom:10px}
+#sealbar{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:12px}
+.seal-cell{background:var(--card);border:1px solid var(--border);border-radius:4px;padding:5px 6px;min-width:0}
+.seal-cell .lb{display:flex;justify-content:space-between;align-items:baseline;font-size:9px;color:var(--muted);line-height:1}
+.seal-cell .lb b{color:#b8c4da;font-weight:600;font-variant-numeric:tabular-nums}
+.seal-cell .tk{position:relative;height:3px;background:#1f2a3a;border-radius:1.5px;margin-top:4px;overflow:hidden}
+.seal-cell .tk>i{display:block;height:100%;width:0%;background:#4a7acc;transition:width .12s linear}
+.seal-cell .tk>u{position:absolute;top:-2px;height:7px;width:1px;background:#ff9b9b;opacity:.85}
+.seal-cell.met .tk>i{background:#66d68b}
+.seal-cell.met .lb b{color:#8fe9a5}
+.section-title{font-size:10px;color:var(--muted);letter-spacing:.12em;text-transform:uppercase;margin:16px 0 8px;font-weight:600}
+.slider{padding:4px 0}
+.slider .hd{display:flex;justify-content:space-between;align-items:baseline;font-size:12px;margin-bottom:1px}
+.slider .hd span{color:#8d98ac}
+.slider .hd b{color:var(--text);font-weight:600;font-variant-numeric:tabular-nums;font-size:12.5px}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:24px;background:transparent;touch-action:pan-y}
+input[type=range]::-webkit-slider-runnable-track{height:4px;background:#1f2a3a;border-radius:2px}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;margin-top:-8px;background:var(--accent);border-radius:50%;border:2px solid #0d1220}
+#settings-scroll{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px 14px 20px;min-height:0}
+.field{margin-bottom:12px}
+.field label{display:block;font-size:11px;color:var(--muted);margin-bottom:5px;letter-spacing:.04em}
+.field input,.field select{width:100%;background:#101828;border:1px solid #253247;border-radius:7px;color:var(--text);font:inherit;font-size:16px;padding:10px 12px;outline:none;-webkit-appearance:none}
+.field input:focus,.field select:focus{border-color:#3a5a8a}
+.field .hint{font-size:11px;color:var(--muted);margin-top:5px;line-height:1.5}
+.field .hint a{color:var(--accent);text-decoration:none}
+.btn{display:block;width:100%;padding:13px;border-radius:9px;font:inherit;font-size:14px;font-weight:500;cursor:pointer;background:#18202f;color:var(--text);border:1px solid #253247;margin-bottom:8px}
+.btn:active{background:#26344e}
+.btn.primary{background:#1a3a6a;border-color:#2f5a9a;color:#c8e0ff}
+.btn.danger{background:#2a1010;border-color:#4a2222;color:#ff9b9b}
+.btn.ok{background:#102a18;border-color:#245a30;color:#8fe9a5}
+#tabs{display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid var(--border);background:#0b1018;padding-bottom:env(safe-area-inset-bottom)}
+#tabs button{padding:12px 4px;border:none;background:transparent;border-radius:0;font:inherit;font-size:12px;color:var(--muted);font-weight:500;border-top:2px solid transparent;margin-top:-1px;cursor:pointer}
+#tabs button.active{color:var(--accent);border-top-color:var(--accent);background:rgba(108,160,255,.06)}
+</style>
+</head>
+<body>
+<header id="hdr">
+<span class="brand">CHARACTER</span>
+<div class="stat">
+<span>α<b id="m-alpha">0.350</b></span>
+<span>事件<b id="m-events">0</b></span>
+</div>
+<span id="badge">OFFLINE</span>
+</header>
+<main id="main">
+<section class="view active" id="view-chat">
+<div id="chat-log"></div>
+<form id="chat-input-bar" autocomplete="off">
+<textarea id="chat-input" rows="1" placeholder="说点什么…" enterkeyhint="send"></textarea>
+<button id="send-btn" type="submit" aria-label="发送">↑</button>
+</form>
+</section>
+<section class="view" id="view-state">
+<div id="state-scroll">
+<div id="mood">
+<div class="mood-item"><div class="k">焦虑<b id="m-anx">0.00</b></div><div class="bar"><i id="b-anx" style="background:var(--anx)"></i></div></div>
+<div class="mood-item"><div class="k">失望<b id="m-dis">0.00</b></div><div class="bar"><i id="b-dis" style="background:var(--dis)"></i></div></div>
+<div class="mood-item"><div class="k">冲击<b id="m-imp">0.00</b></div><div class="bar"><i id="b-imp" style="background:var(--imp)"></i></div></div>
+<div class="mood-item"><div class="k">回避<b id="m-avo">0.00</b></div><div class="bar"><i id="b-avo" style="background:var(--avo)"></i></div></div>
+</div>
+<canvas id="curve"></canvas>
+<div id="sealbar"></div>
+
+<div class="section-title">情绪控制（拖动立即生效）</div>
+<div id="sliders-emotion"></div>
+
+<div class="section-title">身体与刺激</div>
+<div id="sliders-body"></div>
+
+<div class="section-title">认知模型</div>
+<div id="sliders-model"></div>
+
+<div style="height:20px"></div>
+</div>
+</section>
+<section class="view" id="view-settings">
+<div id="settings-scroll">
+<div class="field">
+<label>DeepSeek API Key</sk-8054d1687ea8477aa3eeb8606bfdb49d>
+<input id="set-key" type="password" placeholder="sk-..." autocomplete="off">
+<div class="hint">保存在本机 localStorage，只发送给 DeepSeek。获取：<a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener">platform.deepseek.com</a></div>
+</div>
+<div class="field">
+<label>API Base URL</label>
+<input id="set-url" type="url" placeholder="https://api.deepseek.com">
+<div class="hint">如遇 CORS 错误，填入自建代理地址</div>
+</div>
+<div class="field">
+<label>模型</label>
+<select id="set-model">
+<option value="deepseek-chat">deepseek-chat</option>
+<option value="deepseek-reasoner">deepseek-reasoner</option>
+</select>
+</div>
+<div class="field">
+<label>角色名</label>
+<input id="set-name" type="text" placeholder="Zero">
+</div>
+<div class="field">
+<label>用户称呼</label>
+<input id="set-user" type="text" placeholder="你">
+</div>
+<div class="field">
+<label>情绪分析</label>
+<select id="set-analyze">
+<option value="1">开启（每次发送额外一次 API 调用）</option>
+<option value="0">关闭（省 token，仅聊天）</option>
+</select>
+</div>
+<button class="btn primary" id="btn-test">测试连接</button>
+<button class="btn ok" id="btn-save">保存</button>
+<button class="btn" id="btn-clear-chat">清空对话</button>
+<button class="btn danger" id="btn-reset-char">重置角色状态</button>
+<div class="field" style="margin-top:20px"><div class="hint" style="text-align:center">Character v1.1 · 全参数手动控制</div></div>
+</div>
+</section>
+</main>
+<nav id="tabs">
+<button data-tab="chat" class="active">聊天</button>
+<button data-tab="state">状态</button>
+<button data-tab="settings">设置</button>
+</nav>
+<script>
+const $=id=>document.getElementById(id);
+const clamp01=x=>x<0?0:x>1?1:x;
+const clamp=(x,lo,hi)=>x<lo?lo:x>hi?hi:x;
+const CONFIG={attention:{w:{S:.30,N:.25,E:.20,G:.15,M:.10},threshold:.55,backgroundBleedRate:.02,backgroundCapacity:8,consciousCapacity:2,eventSignificance:1.4},pain:{kappa:.80,eta:.45,floor:.02},thermal:{neutralZone:1.5,coldGain:.12,heatGain:.10,hydrationWeight:.35,activityWeight:.30},disappointment:{decayPerSec:.60,riseRate:4.0},trust:{alpha:.30,beta:.25,gamma:.45,delta:.35,violationExp:1.5,boundaryExp:1.2,floor:-1,ceil:1,riseRate:2.0},avoidance:{w:{T:.40,O:.20,C:.25,E:.15},threshold:.60,fallbackE:.30,trustedE:.50},impact:{durationNormalize:30,riseRate:1.0,anxietyCoupling:.5,harmExitThreshold:.05},anxiety:{decayPerSec:.05},seal:{thresholds:{T:.70,P:.80,H:.75,U:.75,V:.60,F:.70,R:.60},sustainedSeconds:3.0,failDecayTicks:2,anxietyNorm:.60,failureFromDisappointment:.80,failureFromImpact:.40},learning:{alphaBase:.35,alphaDecayPerEvent:.020,alphaFloor:.02,alphaTraumaSpike:.15,traumaSpikeDecay:.05,eventGapSeconds:.5}};
+class Character{
+constructor(){this.traumaSpike=0;this.lastEventAt=-Infinity;this.state={tick:0,t:0,sensitivity:{pain:1,cold:1,heat:1,importance:.7},sensation:{pain:0,coldDiscomfort:0,heatDiscomfort:0},body:{temperature:36.8,hydration:.9,injury:0,energy:.9,activity:.15},mind:{focus:null,conscious:[],background:[]},emotion:{disappointment:0,avoidanceDrive:0,psychologicalImpact:0,anxiety:0},trust:{},model:{painBaseline:0,worldSafety:.7,selfEfficacy:.7,trustBias:0,patterns:[]},alpha:CONFIG.learning.alphaBase,lifetimeEvents:0,harm:{startedAt:null,accumulated:0},lastFocusKind:null,sealed:false,sealProgress:{T:0,P:0,H:0,U:0,V:0,F:0,R:0},sealTicksHeld:0,memory:{episodes:[]}}}
+step(obs,dt){const s=this.state;s.t+=dt;s.tick++;s.body.temperature=obs.bodyTemp;s.body.hydration=obs.hydration;s.body.injury=obs.injury;s.body.energy=obs.energy;s.body.activity=obs.activity;s.sensation.pain=this._sensePain(obs);const th=this._senseThermal(obs);s.sensation.coldDiscomfort=th.cold;s.sensation.heatDiscomfort=th.heat;this._compete(obs,dt);for(const ev of s.mind.conscious){if(ev.kind==='disappointment')this._applyDisappointment(obs,dt);else if(ev.kind==='threat')this._applyThreat(obs,dt);else if(ev.kind==='social')this._applySocial(obs,dt)}
+this._updateHarmTracker(dt);if(s.harm.startedAt!==null)this._applyImpact(dt);this._relaxEmotions(dt);this._checkSeal(dt);this.traumaSpike=Math.max(0,this.traumaSpike-CONFIG.learning.traumaSpikeDecay*dt);s.alpha=this._computeAlpha();if(!s.sealed)this._learn(obs)}
+_sensePain(obs){const I=this.state.sensitivity.pain;const C=1+CONFIG.pain.kappa*obs.injury-CONFIG.pain.eta*(1-obs.energy);return clamp01(obs.pain*I*Math.max(C,CONFIG.pain.floor))}
+_senseThermal(obs){const t=CONFIG.thermal;const d=obs.bodyTemp-obs.temperature;const dz=t.neutralZone;const cs=Math.max(0,d-dz)*t.coldGain;const hs=Math.max(0,-d-dz)*t.heatGain;const hyd=(1-obs.hydration)*t.hydrationWeight;const act=obs.activity*t.activityWeight;return{cold:clamp01(cs*this.state.sensitivity.cold*(1+hyd)),heat:clamp01(hs*this.state.sensitivity.heat*(1+act+hyd))}}
+_compete(obs,dt){const s=this.state,A=CONFIG.attention,cand=[];if(s.sensation.pain>1e-3)cand.push({key:'pain',ev:{kind:'sensation',A:0,payload:{pain:s.sensation.pain}}});if(s.sensation.coldDiscomfort>.05||s.sensation.heatDiscomfort>.05)cand.push({key:'thermal',ev:{kind:'sensation',A:0,payload:{cold:s.sensation.coldDiscomfort,heat:s.sensation.heatDiscomfort}}});if(obs.expectancy)cand.push({key:'expect',ev:{kind:'disappointment',A:0,payload:obs.expectancy}});if(obs.threat>.05)cand.push({key:'threat',ev:{kind:'threat',A:0,payload:{threat:obs.threat}}});if(obs.social)cand.push({key:'social:'+obs.social.target,ev:{kind:'social',A:0,payload:obs.social}});for(const c of cand){const W=A.w;const S=obs.salience??this._ds(c.key,obs);const N=obs.need??clamp01(1-obs.energy);const E=obs.emotion??this._de(c.key);const G=obs.goalRelevance??this._dg(c.key);const M=obs.memoryCue??this._dm(c.key);c.ev.A=W.S*S+W.N*N+W.E*E+W.G*G+W.M*M}
+cand.sort((a,b)=>b.ev.A-a.ev.A);s.mind.conscious=[];for(const c of cand){if(c.ev.A>=A.threshold&&s.mind.conscious.length<A.consciousCapacity){s.mind.conscious.push(c.ev);s.mind.background=s.mind.background.filter(b=>b.key!==c.key)}else{const ex=s.mind.background.find(b=>b.key===c.key);if(ex)ex.payload=c.ev;else if(s.mind.background.length<A.backgroundCapacity)s.mind.background.push({kind:c.ev.kind,key:c.key,strength:c.ev.A,payload:c.ev,ageTicks:0})}}
+for(const bg of s.mind.background){bg.strength+=A.backgroundBleedRate*dt;bg.ageTicks++;if(bg.strength>=A.threshold){s.mind.conscious.push({...bg.payload,A:bg.strength,kind:bg.kind});bg.strength=-1}}
+s.mind.background=s.mind.background.filter(b=>b.strength>=0);s.mind.focus=s.mind.conscious[0]??null}
+_ds(key,obs){if(key==='pain')return clamp01(this.state.sensation.pain*1.2);if(key==='thermal')return clamp01(Math.max(this.state.sensation.coldDiscomfort,this.state.sensation.heatDiscomfort));if(key==='threat')return obs.threat;if(key==='expect')return .7;if(key.startsWith('social'))return .8;return .3}
+_de(key){const e=this.state.emotion;if(key==='expect')return clamp01(e.disappointment*2);if(key==='threat')return clamp01(e.avoidanceDrive);return clamp01(e.anxiety)}
+_dg(key){if(key==='threat')return .9;if(key==='pain')return .6;return .4}
+_dm(key){const h=this.state.memory.episodes.filter(e=>e.kind===key).length;return clamp01(Math.log2(h+1)/5)}
+_applyDisappointment(obs,dt){if(!obs.expectancy)return;const{value:E,importance:I,actual}=obs.expectancy;const gap=Math.max(0,E-actual);this.state.emotion.disappointment=clamp01(this.state.emotion.disappointment+E*I*gap*dt*CONFIG.disappointment.riseRate)}
+_applySocial(obs,dt){if(!obs.social)return;const T=CONFIG.trust;const{target,positive,consistency,violation,boundary}=obs.social;const d=T.alpha*positive+T.beta*consistency-T.gamma*Math.pow(violation,T.violationExp)-T.delta*Math.pow(boundary,T.boundaryExp);const cur=this.state.trust[target]??0;this.state.trust[target]=clamp(cur+d*dt*T.riseRate,T.floor,T.ceil);if(violation>.5)this.traumaSpike=CONFIG.learning.alphaTraumaSpike}
+_applyThreat(obs,dt){const A=CONFIG.avoidance;const T=obs.threat;const O=clamp01(this.state.emotion.anxiety);const C=1-this.state.model.selfEfficacy;const tv=this.state.trust[obs.social?.target??''];const E=clamp01(tv!==undefined&&tv>0?A.trustedE:A.fallbackE);this.state.emotion.avoidanceDrive=clamp01(A.w.T*T+A.w.O*O+A.w.C*C+A.w.E*E)}
+_applyImpact(dt){const s=this.state;const P=s.sensation.pain;const H=clamp01(1-s.model.selfEfficacy);const U=clamp01(1-s.model.selfEfficacy*.5);const h=s.harm;const D=h.startedAt===null?0:clamp01((s.t-h.startedAt)/CONFIG.impact.durationNormalize);const impact=P*H*U*D*CONFIG.impact.riseRate;s.emotion.psychologicalImpact=clamp01(s.emotion.psychologicalImpact+impact*dt);s.emotion.anxiety=clamp01(s.emotion.anxiety+impact*dt*CONFIG.impact.anxietyCoupling)}
+_updateHarmTracker(dt){const s=this.state;const p=s.sensation.pain;if(p>CONFIG.impact.harmExitThreshold){if(s.harm.startedAt===null)s.harm.startedAt=s.t;s.harm.accumulated+=p*dt}else{s.harm.startedAt=null;s.harm.accumulated=0}}
+_checkSeal(dt){const s=this.state;if(s.sealed)return;const TH=CONFIG.seal.thresholds,p=s.sealProgress;p.T=clamp01(s.emotion.avoidanceDrive);p.P=clamp01(s.sensation.pain);p.H=clamp01(1-s.model.selfEfficacy);p.U=clamp01(1-s.model.selfEfficacy*.5);p.V=clamp01(s.emotion.anxiety/CONFIG.seal.anxietyNorm);p.F=clamp01(s.emotion.disappointment*CONFIG.seal.failureFromDisappointment+s.emotion.psychologicalImpact*CONFIG.seal.failureFromImpact);p.R=clamp01(1-s.model.worldSafety);const all=p.T>=TH.T&&p.P>=TH.P&&p.H>=TH.H&&p.U>=TH.U&&p.V>=TH.V&&p.F>=TH.F&&p.R>=TH.R;if(all){s.sealTicksHeld++;if(s.sealTicksHeld*dt>=CONFIG.seal.sustainedSeconds)s.sealed=true}else{s.sealTicksHeld=Math.max(0,s.sealTicksHeld-CONFIG.seal.failDecayTicks)}}
+_computeAlpha(){const L=CONFIG.learning;return Math.max(L.alphaFloor,L.alphaBase/(1+this.state.lifetimeEvents*L.alphaDecayPerEvent)+this.traumaSpike)}
+_learn(obs){const s=this.state,a=s.alpha;s.model.painBaseline+=a*(s.sensation.pain-s.model.painBaseline);s.model.worldSafety+=a*((1-clamp01(obs.threat))-s.model.worldSafety);s.model.selfEfficacy+=a*((1-s.emotion.avoidanceDrive*.5)-s.model.selfEfficacy);if(obs.social){const b=clamp01(((s.trust[obs.social.target]??0)+1)/2);s.model.trustBias+=a*(b-s.model.trustBias)}
+const f=s.mind.focus;if(f){const sig=f.A>=CONFIG.attention.threshold*CONFIG.attention.eventSignificance;const chg=f.kind!==s.lastFocusKind;const ok=(s.t-this.lastEventAt)>=CONFIG.learning.eventGapSeconds;if((sig||chg)&&ok){s.lifetimeEvents++;s.memory.episodes.push({t:s.t,kind:f.kind,intensity:f.A});if(s.memory.episodes.length>512)s.memory.episodes.shift();this.lastEventAt=s.t}s.lastFocusKind=f.kind}}
+_relaxEmotions(dt){const e=this.state.emotion;const k=CONFIG.disappointment.decayPerSec*dt;e.disappointment=Math.max(0,e.disappointment-k);e.avoidanceDrive=Math.max(0,e.avoidanceDrive-k*.5);e.anxiety=Math.max(0,e.anxiety-CONFIG.anxiety.decayPerSec*dt);e.psychologicalImpact=Math.max(0,e.psychologicalImpact-CONFIG.anxiety.decayPerSec*.5*dt)}
+}
+const NEUTRAL={pain:0,threat:0,temperature:22,bodyTemp:36.8,hydration:.9,injury:0,energy:.9,activity:.15,social:null,expectancy:null};
+const env={...NEUTRAL};
+const manualOverride={};
+function tickEnvDecay(dt){const decay=Math.exp(-dt*.25);for(const k of['pain','threat']){if(manualOverride[k]!==undefined)continue;env[k]=env[k]*decay}
+if(manualOverride.social===undefined&&!env.socialLocked)env.social=null;if(manualOverride.expectancy===undefined&&!env.expectLocked)env.expectancy=null}
+function buildObservation(){return{pain:manualOverride.pain??env.pain,temperature:NEUTRAL.temperature,bodyTemp:NEUTRAL.bodyTemp,hydration:NEUTRAL.hydration,injury:0,energy:NEUTRAL.energy,activity:NEUTRAL.activity,threat:manualOverride.threat??env.threat,social:env.social,expectancy:env.expectancy}}
+const LS={key:'char.ds.key',url:'char.ds.url',model:'char.ds.model',name:'char.ds.name',user:'char.ds.user',analyze:'char.ds.analyze',chat:'char.ds.chat'};
+const config={key:localStorage.getItem(LS.key)||'',url:localStorage.getItem(LS.url)||'https://api.deepseek.com',model:localStorage.getItem(LS.model)||'deepseek-chat',name:localStorage.getItem(LS.name)||'Zero',user:localStorage.getItem(LS.user)||'你',analyze:localStorage.getItem(LS.analyze)!=='0'};
+const ch=new Character();
+const FIXED_DT=1/60;let lastT=performance.now();let acc=0;let uiAcc=0;
+function loop(now){const raw=Math.min((now-lastT)/1000,.1);lastT=now;acc+=raw;let safety=10;while(acc>=FIXED_DT&&safety-->0){tickEnvDecay(FIXED_DT);ch.step(buildObservation(),FIXED_DT);acc-=FIXED_DT}
+if(acc>FIXED_DT)acc=0;pushHistory();uiAcc+=raw;if(uiAcc>=1/30){renderUI();uiAcc=0}requestAnimationFrame(loop)}
+const HISTORY=600;const hist={anxiety:new Float32Array(HISTORY),disappointment:new Float32Array(HISTORY),impact:new Float32Array(HISTORY),avoidance:new Float32Array(HISTORY)};let histHead=0,histCount=0;
+function pushHistory(){hist.anxiety[histHead]=ch.state.emotion.anxiety;hist.disappointment[histHead]=ch.state.emotion.disappointment;hist.impact[histHead]=ch.state.emotion.psychologicalImpact;hist.avoidance[histHead]=ch.state.emotion.avoidanceDrive;histHead=(histHead+1)%HISTORY;if(histCount<HISTORY)histCount++}
+const curveCanvas=$('curve');const curveCtx=curveCanvas.getContext('2d');const DPR=Math.min(window.devicePixelRatio||1,2);
+function resizeCanvas(){const r=curveCanvas.getBoundingClientRect();const w=Math.max(1,Math.floor(r.width));const h=Math.max(1,Math.floor(r.height));if(curveCanvas.width!==w*DPR||curveCanvas.height!==h*DPR){curveCanvas.width=w*DPR;curveCanvas.height=h*DPR}}
+function renderCurve(){const r=curveCanvas.getBoundingClientRect();const W=r.width,H=r.height;curveCtx.setTransform(DPR,0,0,DPR,0,0);curveCtx.clearRect(0,0,W,H);curveCtx.strokeStyle='#151d2a';curveCtx.lineWidth=1;for(let i=1;i<3;i++){const y=Math.floor(H*i/3)+.5;curveCtx.beginPath();curveCtx.moveTo(0,y);curveCtx.lineTo(W,y);curveCtx.stroke()}
+if(histCount<2)return;const MAX_PTS=200;const step=Math.max(1,Math.floor(histCount/MAX_PTS));const n=Math.floor(histCount/step);const draw=(data,color)=>{curveCtx.strokeStyle=color;curveCtx.lineWidth=1.5;curveCtx.beginPath();for(let i=0;i<n;i++){const idx=(histHead-histCount+i*step+HISTORY*2)%HISTORY;const x=(i/(n-1))*W;const y=H-Math.max(0,Math.min(1,data[idx]))*H;if(i===0)curveCtx.moveTo(x,y);else curveCtx.lineTo(x,y)}
+curveCtx.stroke()};draw(hist.avoidance,'#6ca0ff');draw(hist.disappointment,'#ffc46c');draw(hist.impact,'#c07dff');draw(hist.anxiety,'#ff7d7d')}
+const SEAL_KEYS=['T','P','H','U','V','F','R'];const SEAL_LABELS={T:'T威',P:'P痛',H:'H无',U:'U失',V:'V焦',F:'F败',R:'R恢'};const sealCells={};const sealBar=$('sealbar');
+for(const key of SEAL_KEYS){const cell=document.createElement('div');cell.className='seal-cell';const lb=document.createElement('div');lb.className='lb';const nm=document.createElement('span');nm.textContent=SEAL_LABELS[key];const vb=document.createElement('b');vb.textContent='0';lb.append(nm,vb);const tk=document.createElement('div');tk.className='tk';const bar=document.createElement('i');const thr=document.createElement('u');thr.style.left=(CONFIG.seal.thresholds[key]*100).toFixed(1)+'%';tk.append(bar,thr);cell.append(lb,tk);sealBar.appendChild(cell);sealCells[key]={cell,vb,bar}}
+
+/* ===== 全参数滑块构建 ===== */
+function makeSlider(parent,key,label,min,max,step,fmt,onChange){const wrap=document.createElement('div');wrap.className='slider';const hd=document.createElement('div');hd.className='hd';const lab=document.createElement('span');lab.textContent=label;const val=document.createElement('b');const cur=manualOverride[key]??ch.state.emotion[key]??ch.state.body[key]??ch.state.model[key]??0;val.textContent=fmt(cur);hd.append(lab,val);const inp=document.createElement('input');inp.type='range';inp.min=min;inp.max=max;inp.step=step;inp.value=cur;inp.dataset.key=key;
+inp.addEventListener('input',()=>{const v=parseFloat(inp.value);manualOverride[key]=v;val.textContent=fmt(v);if(onChange)onChange(v)});
+wrap.append(hd,inp);parent.appendChild(wrap);return inp}
+
+const emoSliders=$('sliders-emotion');
+makeSlider(emoSliders,'anxiety','焦虑',0,1,.01,v=>v.toFixed(2));
+makeSlider(emoSliders,'disappointment','失望',0,1,.01,v=>v.toFixed(2));
+makeSlider(emoSliders,'psychologicalImpact','心理冲击',0,1,.01,v=>v.toFixed(2));
+makeSlider(emoSliders,'avoidanceDrive','回避驱动',0,1,.01,v=>v.toFixed(2));
+
+const bodySliders=$('sliders-body');
+makeSlider(bodySliders,'pain','疼痛 S',0,1,.01,v=>v.toFixed(2));
+makeSlider(bodySliders,'threat','威胁 T',0,1,.01,v=>v.toFixed(2));
+makeSlider(bodySliders,'energy','体力',0,1,.01,v=>v.toFixed(2));
+makeSlider(bodySliders,'injury','损伤',0,1,.01,v=>v.toFixed(2));
+makeSlider(bodySliders,'hydration','水分',0,1,.01,v=>v.toFixed(2));
+
+const modelSliders=$('sliders-model');
+makeSlider(modelSliders,'selfEfficacy','自我效能',0,1,.01,v=>v.toFixed(2));
+makeSlider(modelSliders,'worldSafety','世界安全',0,1,.01,v=>v.toFixed(2));
+makeSlider(modelSliders,'painBaseline','疼痛基线',0,1,.01,v=>v.toFixed(2));
+makeSlider(modelSliders,'trustBias','信任偏差',-1,1,.01,v=>v.toFixed(2));
+
+/* 手动覆盖应用 */
+function applyManualOverrides(){
+  const ov=manualOverride;
+  if(ov.pain!==undefined) env.pain=ov.pain;
+  if(ov.threat!==undefined) env.threat=ov.threat;
+  if(ov.anxiety!==undefined) ch.state.emotion.anxiety=ov.anxiety;
+  if(ov.disappointment!==undefined) ch.state.emotion.disappointment=ov.disappointment;
+  if(ov.psychologicalImpact!==undefined) ch.state.emotion.psychologicalImpact=ov.psychologicalImpact;
+  if(ov.avoidanceDrive!==undefined) ch.state.emotion.avoidanceDrive=ov.avoidanceDrive;
+  if(ov.selfEfficacy!==undefined) ch.state.model.selfEfficacy=ov.selfEfficacy;
+  if(ov.worldSafety!==undefined) ch.state.model.worldSafety=ov.worldSafety;
+  if(ov.painBaseline!==undefined) ch.state.model.painBaseline=ov.painBaseline;
+  if(ov.trustBias!==undefined) ch.state.model.trustBias=ov.trustBias;
+  if(ov.energy!==undefined) NEUTRAL.energy=ov.energy;
+  if(ov.injury!==undefined) NEUTRAL.injury=ov.injury;
+  if(ov.hydration!==undefined) NEUTRAL.hydration=ov.hydration;
+}
+
+/* ===== UI 更新 ===== */
+function renderUI(){
+  applyManualOverrides();
+  const s=ch.state;
+  $('m-alpha').textContent=s.alpha.toFixed(3);
+  $('m-events').textContent=String(s.lifetimeEvents);
+  const badge=$('badge');
+  if(s.sealed){badge.textContent='SEALED';badge.className='sealed'}
+  else if(config.key){badge.textContent='ACTIVE';badge.className=''}
+  else{badge.textContent='NO KEY';badge.className='offline'}
+  const e=s.emotion;
+  $('m-anx').textContent=e.anxiety.toFixed(2);
+  $('m-dis').textContent=e.disappointment.toFixed(2);
+  $('m-imp').textContent=e.psychologicalImpact.toFixed(2);
+  $('m-avo').textContent=e.avoidanceDrive.toFixed(2);
+  $('b-anx').style.width=(e.anxiety*100).toFixed(1)+'%';
+  $('b-dis').style.width=(e.disappointment*100).toFixed(1)+'%';
+  $('b-imp').style.width=(e.psychologicalImpact*100).toFixed(1)+'%';
+  $('b-avo').style.width=(e.avoidanceDrive*100).toFixed(1)+'%';
+  const p=s.sealProgress;
+  for(const k of SEAL_KEYS){
+    const cell=sealCells[k];const v=p[k];
+    cell.bar.style.width=(Math.max(0,Math.min(1,v))*100).toFixed(1)+'%';
+    cell.vb.textContent=v.toFixed(2).slice(1);
+    cell.cell.classList.toggle('met',v>=CONFIG.seal.thresholds[k]);
+  }
+  // 同步滑块显示值（如果没被手动拖动）
+  document.querySelectorAll('#sliders-emotion input, #sliders-body input, #sliders-model input').forEach(inp=>{
+    if(document.activeElement===inp)return;
+    const key=inp.dataset.key;
+    let val=undefined;
+    if(key in ch.state.emotion) val=ch.state.emotion[key];
+    else if(key in ch.state.body) val=ch.state.body[key];
+    else if(key in ch.state.model) val=ch.state.model[key];
+    else if(key==='pain') val=env.pain;
+    else if(key==='threat') val=env.threat;
+    else if(key==='energy') val=NEUTRAL.energy;
+    else if(key==='injury') val=NEUTRAL.injury;
+    else if(key==='hydration') val=NEUTRAL.hydration;
+    if(val!==undefined){inp.value=val;inp.previousElementSibling.querySelector('b').textContent=parseFloat(val).toFixed(2)}
+  });
+}
+
+function stateSummary(){const s=ch.state,e=s.emotion;const lines=[];lines.push(`焦虑=${e.anxiety.toFixed(2)} 失望=${e.disappointment.toFixed(2)}`);lines.push(`心理冲击=${e.psychologicalImpact.toFixed(2)} 回避驱动=${e.avoidanceDrive.toFixed(2)}`);lines.push(`疼痛=${s.sensation.pain.toFixed(2)} 疼痛基线=${s.model.painBaseline.toFixed(2)}`);lines.push(`自我效能=${s.model.selfEfficacy.toFixed(2)} 世界安全=${s.model.worldSafety.toFixed(2)}`);lines.push(`学习率α=${s.alpha.toFixed(3)} 已历事件=${s.lifetimeEvents}`);lines.push(`封存状态=${s.sealed?'SEALED（情感麻木、机械）':'active'}`);return lines.join('\n')}
+function buildSystemPrompt(){return`你现在扮演「${config.name}」——一个具有连续心理状态的角色。你的情绪、反应不是随机的，而是由一套心理状态机实时驱动。
+【当前心理状态】
+${stateSummary()}
+【行为准则】
+- 焦虑高（>0.6）：回复短促、警觉、反复确认
+- 失望高（>0.5）：语气冷淡、疏离、避免投入
+- 心理冲击高（>0.6）：情绪化、语无伦次、容易激动
+- 回避驱动高（>0.5）：试图结束对话、转移话题
+- 自我效能低（<0.4）：自我否定、犹豫、不敢承诺
+- 世界安全低（<0.4）：对陌生人设防、试探性提问
+- 封存状态（SEALED）：情感麻木、机械回应、不再学习新东西
+- 学习率低：性格已固化，不轻易改变观点
+【记忆】
+用户称呼：${config.user}
+当前对用户的信任：${(ch.state.trust[config.user]??0).toFixed(2)}（范围 -1 到 1）
+【规则】
+1. 用第一人称，直接说话，可以少量要描述动作或旁白
 2. 长度 1-3 句，除非情绪激动时可略长
 3. 反应要匹配上面的状态，不要假装热情
 4. 不要提及"状态机""焦虑值"这些元信息
